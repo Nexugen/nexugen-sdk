@@ -1,6 +1,6 @@
 {
   "name": "nexugen",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Nexugen API client: projects, builds, edits, deploys and Pilot, with streaming turns and webhook verification.",
   "license": "MIT",
   "type": "module",

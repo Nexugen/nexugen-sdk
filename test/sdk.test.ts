@@ -148,3 +148,31 @@ test('makes embed links and sends input, mapping a missing scope to NexugenError
     ['/projects/p1/pilot/screen/input', { kind: 'click', x: 100, y: 200 }],
   ]);
 });
+
+test('connects an outside app and runs Pilot for an app\'s users', async () => {
+  const calls: Array<[string, string, unknown]> = [];
+  const nx = new Nexugen({
+    apiKey: 'nxg_test', baseUrl: 'https://x.test/api/v1', maxRetries: 0,
+    fetch: async (url, init) => {
+      const path = String(url).replace('https://x.test/api/v1', '');
+      const method = init?.method || 'GET';
+      calls.push([method, path, init?.body ? JSON.parse(String(init.body)) : undefined]);
+      if (path === '/pilot/apps') return json({ ok: true, projectId: 'ext1', name: 'Shop', message: 'Connected' }, 201);
+      return json({ exists: true, enabled: method === 'POST', publicKey: 'pa_abcdefghij' });
+    },
+  });
+  const app = await nx.accountPilot.connectApp({ kind: 'platform', provider: 'shopify', shopDomain: 'shop.myshopify.com', accessToken: 'shpat_x' });
+  assert.equal(app.projectId, 'ext1');
+  const on = await nx.pilot('p1').forUsers.enable();
+  assert.equal(on.enabled, true);
+  await nx.pilot('p1').forUsers.settings({ monthlyCap: 500, model: 'smart' });
+  await nx.pilot('p1').forUsers.toggle('cancel_order', false);
+  assert.equal((await nx.pilot('p1').forUsers.get()).publicKey, 'pa_abcdefghij');
+  assert.deepEqual(calls.map((c) => [c[0], c[1], c[2]]), [
+    ['POST', '/pilot/apps', { kind: 'platform', provider: 'shopify', shopDomain: 'shop.myshopify.com', accessToken: 'shpat_x', action: 'connect' }],
+    ['POST', '/projects/p1/app-assistant', { action: 'enable' }],
+    ['POST', '/projects/p1/app-assistant', { action: 'settings', settings: { monthlyCap: 500, model: 'smart' } }],
+    ['POST', '/projects/p1/app-assistant', { action: 'toggle', name: 'cancel_order', on: false }],
+    ['GET', '/projects/p1/app-assistant', undefined],
+  ]);
+});

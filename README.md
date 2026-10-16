@@ -98,7 +98,7 @@ const { turnId } = await pilot.askAsync('Tidy up product names that are all caps
 const result = await pilot.turns.get(turnId);   // status: running | completed | failed | cancelled
 ```
 
-Or skip polling and use the `pilot.turn.completed` webhook (section 7).
+Or skip polling and use the `pilot.turn.completed` webhook (section 9).
 
 ### Stop a turn
 
@@ -205,7 +205,41 @@ await screen.handBack();               // Pilot takes over again when asked some
 
 ---
 
-## 6. Other things you can do
+## 6. Pilot for your users
+
+Give the people who use your app their own Pilot: a chat inside the app that knows it from its code, answers their questions and does what they ask, with their own access. It works through your app's own actions and pages, in their browser, as them, so it can never do more than they could by hand. Every change waits for their Confirm, and they can talk instead of typing. It is off until you turn it on, uses your credits up to a monthly limit you set, and shows "Powered by Nexugen".
+
+```ts
+const users = nx.pilot(projectId).forUsers;
+
+await users.enable();                                   // reads the app, adds the chat, redeploys
+await users.settings({ monthlyCap: 2000, model: 'fast', audience: 'signed-in' });
+await users.toggle('cancel_order', false);              // switch one action off
+
+const state = await users.get();
+console.log(state.map?.actions.map((a) => `${a.on ? 'on ' : 'off'} ${a.label}`));
+console.log(`${state.usage?.questions} questions, ${state.usage?.credits} of ${state.usage?.cap} credits this month`);
+```
+
+It reads the app again by itself after the app's code changes. Staff-only actions start off; turn them on with `toggle` if you want staff to use them through the chat. You can do all of this from the app's Overview in the dashboard too.
+
+## 7. Apps not built on Nexugen
+
+Pilot can run an app Nexugen does not host: its database (Postgres or MySQL), a Shopify, WooCommerce, WordPress or Stripe account, or any website. Connect it once, then use it like any other app.
+
+```ts
+const check = await nx.accountPilot.testApp({ kind: 'database', connectionString: process.env.SHOP_DB_URL! });
+if (!check.ok) throw new Error(check.message);
+
+const { projectId } = await nx.accountPilot.connectApp({ kind: 'database', connectionString: process.env.SHOP_DB_URL!, name: 'My shop' });
+for await (const ev of nx.pilot(projectId).ask('How many orders came in this week, and which product sold most?')) {
+  if (ev.type === 'done') console.log(ev.text);
+}
+```
+
+Credentials are tested first, stored encrypted, and never come back. Changes to an outside app always wait for your approval.
+
+## 8. Other things you can do
 
 ```ts
 // History and what needs attention
@@ -228,7 +262,7 @@ const domains = await nx.request('GET', '/projects/PROJECT_ID/domains');
 
 ---
 
-## 7. Webhooks (Nexugen calls you)
+## 9. Webhooks (Nexugen calls you)
 
 Register a URL under **Settings > API and webhooks**, or from code:
 
@@ -276,7 +310,7 @@ Deliveries are signed (`x-nexugen-signature: sha256=...` over `timestamp.body`).
 
 ---
 
-## 8. Errors and limits
+## 10. Errors and limits
 
 Every failure throws a `NexugenError` with `status`, `code` and a readable `message`:
 
@@ -308,7 +342,7 @@ A key acts as its owner. Project access, team sharing, credits and plan limits a
 
 ---
 
-## 9. Without the SDK (any language, curl)
+## 11. Without the SDK (any language, curl)
 
 ```bash
 # Stream a turn (server-sent events)
@@ -356,7 +390,7 @@ All Pilot endpoints:
 
 ---
 
-## 10. Example: a nightly "what needs me" report
+## 12. Example: a nightly "what needs me" report
 
 ```ts
 import { Nexugen } from 'nexugen';

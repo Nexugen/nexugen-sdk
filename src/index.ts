@@ -71,7 +71,7 @@ export interface PilotActivity {
 }
 
 /** The package version, sent in the user agent. */
-export const SDK_VERSION = '0.2.0';
+export const SDK_VERSION = '0.3.0';
 
 // ---- Pilot's screen ----
 
@@ -425,6 +425,65 @@ export class ProjectPilot extends PilotBase {
   get screen(): PilotScreen {
     return new PilotScreen(this.client, `${this.root}/screen`);
   }
+
+  /**
+   * Pilot for your users: the assistant inside this app for the people who use it. It
+   * answers their questions and does what they ask with their own access, each change
+   * confirmed by them. Off until you turn it on; it spends your credits up to a monthly
+   * limit. Turning it on reads the app, adds the chat to it and redeploys. Needs a key
+   * that can write to change it.
+   */
+  get forUsers(): AppAssistant {
+    return new AppAssistant(this.client, `/projects/${encodeURIComponent(this.projectId)}/app-assistant`);
+  }
+}
+
+export interface AppAssistantSettings {
+  greeting?: string;
+  /** Credits a month it may spend. */
+  monthlyCap?: number;
+  /** fast: lowest cost. smart: for complex apps. */
+  model?: 'fast' | 'smart';
+  audience?: 'everyone' | 'signed-in';
+  /** May it click and type on the app's pages, not only call its actions. */
+  pageActions?: boolean;
+  /** Extra sites it may run on beyond the app's own addresses. */
+  origins?: string[];
+}
+
+export interface AppAssistantState {
+  exists: boolean;
+  enabled: boolean;
+  publicKey?: string;
+  /** The tag, for adding it by hand. */
+  snippet?: string;
+  scan?: { status: 'none' | 'scanning' | 'ready' | 'failed'; error: string | null; at: string | null };
+  map?: { summary: string; roles: string[]; pages: number; whoami: boolean; actions: Array<{ name: string; label: string; method: string; path: string; kind: 'read' | 'write'; audience: 'public' | 'user' | 'admin'; on: boolean }> };
+  settings?: AppAssistantSettings;
+  install?: { file: string | null; installed: boolean };
+  origins?: string[];
+  usage?: { credits: number; cap: number; questions: number };
+  recent?: Array<{ id: string; question: string; answer: string | null; actions: unknown[]; credits: number; createdAt: string; visitor: string }>;
+}
+
+export class AppAssistant {
+  private readonly client: Nexugen;
+  private readonly root: string;
+  constructor(client: Nexugen, root: string) {
+    this.client = client;
+    this.root = root;
+  }
+  private act(body: Record<string, unknown>) { return this.client.request<AppAssistantState>('POST', this.root, { body }); }
+  get(): Promise<AppAssistantState> { return this.client.request('GET', this.root); }
+  enable() { return this.act({ action: 'enable' }); }
+  disable() { return this.act({ action: 'disable' }); }
+  /** Read the app again (it also does this by itself after the app's code changes). */
+  rescan() { return this.act({ action: 'scan' }); }
+  /** Add the tag to the app again, if it went missing. */
+  install() { return this.act({ action: 'install' }); }
+  settings(settings: AppAssistantSettings) { return this.act({ action: 'settings', settings }); }
+  /** Switch one of the app's actions on or off for the assistant. */
+  toggle(name: string, on: boolean) { return this.act({ action: 'toggle', name, on }); }
 }
 
 /**
@@ -521,7 +580,30 @@ export class AccountPilot extends PilotBase {
       client.request<{ change: PilotChange }>('POST', `/pilot/changes/${encodeURIComponent(changeId)}/${action}`, { idempotencyKey: newIdempotencyKey() });
     return { approve: act('approve'), reject: act('reject') };
   }
+
+  /**
+   * Connect an app Nexugen does not host, so Pilot can run it: its database, a store
+   * platform or a website. Credentials are tested, then saved encrypted; they never come
+   * back. Use the returned projectId with `nx.pilot(projectId)`. Needs a key that can write.
+   */
+  connectApp(input: ConnectAppInput): Promise<{ ok: boolean; projectId: string; name?: string; message?: string }> {
+    return this.client.request('POST', '/pilot/apps', { body: { ...input, action: 'connect' } });
+  }
+
+  /** Check a connection without saving anything. */
+  testApp(input: ConnectAppInput): Promise<{ ok: boolean; message: string; name: string | null }> {
+    return this.client.request('POST', '/pilot/apps', { body: { ...input, action: 'test' } });
+  }
 }
+
+export type ConnectAppInput = { name?: string } & (
+  | { kind: 'database'; connectionString: string; siteUrl?: string; adminUrl?: string }
+  | { kind: 'platform'; provider: 'woocommerce'; siteUrl: string; consumerKey: string; consumerSecret: string }
+  | { kind: 'platform'; provider: 'shopify'; shopDomain: string; accessToken: string }
+  | { kind: 'platform'; provider: 'wordpress'; siteUrl: string; username: string; appPassword: string }
+  | { kind: 'platform'; provider: 'stripe'; apiKey: string; siteUrl?: string }
+  | { kind: 'website'; siteUrl: string; adminUrl?: string; loginEmail?: string; loginPassword?: string }
+);
 
 // ---------------------------------------------------------------------------------------
 // Projects and sessions (thin, typed wrappers; anything else via client.request)
