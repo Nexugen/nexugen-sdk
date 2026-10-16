@@ -1,0 +1,52 @@
+{
+  "name": "@nexugen/sdk",
+  "version": "0.1.0",
+  "description": "Nexugen API client: projects, builds, edits, deploys and Pilot, with streaming turns and webhook verification.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "nexugen",
+    "pilot",
+    "ai",
+    "sdk",
+    "app-builder"
+  ],
+  "homepage": "https://nexugen.app/dashboard/docs#api-pilot",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nexugen/nexugen-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Nexugen/nexugen-sdk/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}
