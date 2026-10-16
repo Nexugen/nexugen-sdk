@@ -1,4 +1,4 @@
-// @nexugen/sdk: a typed client for the Nexugen API (https://nexugen.app/dashboard/docs#api).
+// nexugen: a typed client for the Nexugen API (https://nexugen.app/dashboard/docs#api).
 //
 // No dependencies: plain fetch, Web Streams and Web Crypto, so it runs on Node 18+, Deno,
 // Bun and edge runtimes alike.

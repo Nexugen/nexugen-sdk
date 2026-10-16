@@ -1,5 +1,5 @@
 {
-  "name": "@nexugen/sdk",
+  "name": "nexugen",
   "version": "0.1.0",
   "description": "Nexugen API client: projects, builds, edits, deploys and Pilot, with streaming turns and webhook verification.",
   "license": "MIT",
@@ -34,7 +34,7 @@
     "sdk",
     "app-builder"
   ],
-  "homepage": "https://nexugen.app/dashboard/docs#api-pilot",
+  "homepage": "https://github.com/Nexugen/nexugen-sdk#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Nexugen/nexugen-sdk.git"

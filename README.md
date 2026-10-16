@@ -1,12 +1,12 @@
 # Nexugen SDK and Pilot API: how to use it
 
-`@nexugen/sdk` lets your own code do what you do in the Nexugen dashboard:
+The `nexugen` package lets your own code do what you do in the Nexugen dashboard:
 - build and edit apps, and deploy them;
 - above all, drive **Pilot**, the assistant that runs an app with you.
 
 It's a small TypeScript/JavaScript package with no dependencies. It runs on Node 18+, Deno, Bun and edge runtimes (Vercel, Cloudflare Workers). Under it is the plain HTTP API at `https://nexugen.app/api/v1`, which any language can call directly (see "Without the SDK" below).
 
-Full endpoint reference: https://nexugen.app/dashboard/docs#api
+Source: https://github.com/Nexugen/nexugen-sdk. Full endpoint reference: https://nexugen.app/dashboard/docs#api
 
 ---
 
@@ -32,11 +32,11 @@ export NEXUGEN_API_KEY=nxg_...
 ## 2. Install
 
 ```bash
-npm install @nexugen/sdk
+npm install nexugen
 ```
 
 ```ts
-import { Nexugen } from '@nexugen/sdk';
+import { Nexugen } from 'nexugen';
 
 const nx = new Nexugen();                       // reads NEXUGEN_API_KEY
 // or: new Nexugen({ apiKey: 'nxg_...' })
@@ -196,7 +196,7 @@ Verify every delivery before trusting it. Pass the **raw** body, not parsed JSON
 
 ```ts
 import express from 'express';
-import { verifyWebhook } from '@nexugen/sdk';
+import { verifyWebhook } from 'nexugen';
 
 const app = express();
 app.post('/nexugen-hook', express.text({ type: '*/*' }), async (req, res) => {
@@ -221,7 +221,7 @@ Deliveries are signed (`x-nexugen-signature: sha256=...` over `timestamp.body`).
 Every failure throws a `NexugenError` with `status`, `code` and a readable `message`:
 
 ```ts
-import { NexugenError } from '@nexugen/sdk';
+import { NexugenError } from 'nexugen';
 try {
   await pilot.askAndWait('...');
 } catch (e) {
@@ -294,7 +294,7 @@ All Pilot endpoints:
 ## 9. Example: a nightly "what needs me" report
 
 ```ts
-import { Nexugen } from '@nexugen/sdk';
+import { Nexugen } from 'nexugen';
 
 const nx = new Nexugen();
 const { projects } = await nx.projects.list({ limit: 50 });
