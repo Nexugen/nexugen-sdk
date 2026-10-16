@@ -77,3 +77,74 @@ test('verifies webhook signatures the way the platform signs them', async () => 
   await assert.rejects(verifyWebhook({ secret, body: body + ' ', headers: { 'x-nexugen-timestamp': ts, 'x-nexugen-signature': `sha256=${sig}` } }));
   await assert.rejects(verifyWebhook({ secret, body, headers: { 'x-nexugen-timestamp': String(Date.now() - 600_000), 'x-nexugen-signature': `sha256=${sig}` } }));
 });
+
+const named = (events: Array<[string, object]>) => {
+  const enc = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(c) {
+      for (const [event, data] of events) c.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      c.close();
+    },
+  });
+};
+
+test('watches the screen: frames, pages, overlays, then closed', async () => {
+  const nx = new Nexugen({
+    apiKey: 'nxg_test', baseUrl: 'https://x.test/api/v1',
+    fetch: async (url) => {
+      assert.equal(String(url), 'https://x.test/api/v1/projects/p1/pilot/screen');
+      return new Response(named([
+        ['page', { url: 'https://shop.test/orders', device: 'phone', viewport: { width: 390, height: 844 } }],
+        ['frame', { jpeg: 'QUJD', w: 390, h: 844 }],
+        ['overlay', { type: 'cursor', x: 10, y: 20, ms: 400 }],
+        ['closed', { reason: 'no-screen' }],
+        ['frame', { jpeg: 'AFTER', w: 1, h: 1 }],
+      ]), { headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+  const seen = [];
+  for await (const ev of nx.pilot('p1').screen.watch()) seen.push(ev);
+  assert.deepEqual(seen.map((e) => e.type), ['page', 'frame', 'overlay', 'closed']);
+  assert.deepEqual(seen[1], { type: 'frame', jpeg: 'QUJD', width: 390, height: 844 });
+  assert.equal((seen[0] as { device: string }).device, 'phone');
+  assert.equal((seen[2] as { overlay: { type: string } }).overlay.type, 'cursor');
+});
+
+test('follow waits for the screen to come back, until aborted', async () => {
+  let connects = 0;
+  const ac = new AbortController();
+  const nx = new Nexugen({
+    apiKey: 'nxg_test', baseUrl: 'https://x.test/api/v1',
+    fetch: async () => {
+      connects++;
+      return new Response(named(connects === 1 ? [['closed', { reason: 'no-screen' }]] : [['frame', { jpeg: 'Wg==', w: 2, h: 2 }]]), { headers: { 'content-type': 'text/event-stream' } });
+    },
+  });
+  const types: string[] = [];
+  for await (const ev of nx.pilot('p1').screen.watch({ follow: true, signal: ac.signal })) {
+    types.push(ev.type);
+    if (ev.type === 'frame') ac.abort();
+  }
+  assert.deepEqual(types, ['closed', 'frame']);
+  assert.equal(connects, 2);
+});
+
+test('makes embed links and sends input, mapping a missing scope to NexugenError', async () => {
+  const bodies: Array<[string, unknown]> = [];
+  const nx = new Nexugen({
+    apiKey: 'nxg_test', baseUrl: 'https://x.test/api/v1', maxRetries: 0,
+    fetch: async (url, init) => {
+      const path = String(url).replace('https://x.test/api/v1', '');
+      bodies.push([path, init?.body ? JSON.parse(String(init.body)) : undefined]);
+      if (path.endsWith('/embeds')) return json({ url: 'https://nexugen.app/embed/pilot-screen/abc.def', expiresAt: '2026-10-16T13:00:00.000Z', control: false, origins: ['https://example.com'] }, 201);
+      return json({ error: 'needs a key that may use the app', code: 'insufficient_permission' }, 403);
+    },
+  });
+  const link = await nx.pilot('p1').screen.embed({ ttlSeconds: 600, origins: ['https://example.com'] });
+  assert.match(link.url, /\/embed\/pilot-screen\//);
+  await assert.rejects(nx.pilot('p1').screen.click(100, 200), (e: unknown) => e instanceof NexugenError && e.code === 'insufficient_permission');
+  assert.deepEqual(bodies, [
+    ['/projects/p1/pilot/screen/embeds', { ttlSeconds: 600, origins: ['https://example.com'] }],
+    ['/projects/p1/pilot/screen/input', { kind: 'click', x: 100, y: 200 }],
+  ]);
+});

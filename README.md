@@ -17,6 +17,8 @@ Source: https://github.com/Nexugen/nexugen-sdk. Full endpoint reference: https:/
    - **Allow writes**: start builds and edits, deploy, change settings.
    - **Ask Pilot**: run Pilot turns in your apps. They use credits, as in the dashboard; free monthly Pilot tasks count first.
    - **Approve Pilot's changes**: approve, reject or undo changes Pilot proposes.
+   - **Watch Pilot's screen**: stream Pilot's live screen, and make links to embed it on your own site.
+   - **Use the app on Pilot's screen**: click and type in the app on that screen, as you. Includes watching.
 3. Copy the key (`nxg_...`). It is shown **once**. If you lose it, revoke it and make another.
 
 Good practice: give the script that *asks* Pilot one key, and keep **Approve** on a separate key held by a person or a trusted service. That way a script can never approve its own changes.
@@ -96,7 +98,7 @@ const { turnId } = await pilot.askAsync('Tidy up product names that are all caps
 const result = await pilot.turns.get(turnId);   // status: running | completed | failed | cancelled
 ```
 
-Or skip polling and use the `pilot.turn.completed` webhook (section 6).
+Or skip polling and use the `pilot.turn.completed` webhook (section 7).
 
 ### Stop a turn
 
@@ -145,7 +147,65 @@ await p.changes.undo('chg_...');      // a change that was already made
 
 ---
 
-## 5. Other things you can do
+## 5. Pilot's screen: watch it, or put it on your site
+
+Pilot works in your app on a live screen, the same one you see beside the chat in the dashboard. A key with **Watch Pilot's screen** can stream it, or make a link to show it in an `<iframe>` on your own site.
+
+### Embed it (an iframe)
+
+Make the link on your server when the page loads, then drop it in:
+
+```ts
+const link = await nx.pilot('PROJECT_ID').screen.embed({
+  ttlSeconds: 3600,                     // default 1 hour, max 24 hours
+  origins: ['https://example.com'],     // sites allowed to frame it; leave out for any
+});
+// link.url -> https://nexugen.app/embed/pilot-screen/eyJ...
+```
+
+```html
+<iframe src="https://nexugen.app/embed/pilot-screen/eyJ..." width="960" height="640"
+        style="border:0" allow="fullscreen"></iframe>
+```
+
+It shows the app with Pilot's cursor, clicks, highlights and step captions, on desktop or inside a phone frame, and waits quietly while Pilot is not on the screen. Add `?chrome=0` to the URL to hide the address bar, `?theme=light` for a light background.
+
+- Watch-only by default. `control: true` lets viewers click and type in the app **as you**; it needs a key with **Use the app on Pilot's screen** and lasts an hour at most.
+- Anyone with the link can watch until it expires, so don't store links or put them in public pages. Revoking the key turns off every link it made, at once.
+- Passwords and keys on the page are painted over in every frame. While someone is signing in on the screen, nothing is shown at all.
+
+### Watch it from code
+
+```ts
+const screen = nx.pilot('PROJECT_ID').screen;
+
+await screen.open({ device: 'phone' });         // or let Pilot open it when it needs to
+console.log(await screen.status());              // { open: true, private: false, origin: ... }
+
+for await (const ev of screen.watch({ follow: true, signal })) {
+  if (ev.type === 'frame') await writeFile('latest.jpg', Buffer.from(ev.jpeg, 'base64'));
+  if (ev.type === 'page') console.log('now on', ev.url, ev.device);
+  if (ev.type === 'overlay' && ev.overlay.type === 'caption') console.log('Pilot:', ev.overlay.text);
+}
+```
+
+`watch()` yields `frame` (a JPEG, about 9 a second while something moves), `page` (address, device, size), `overlay` (Pilot's cursor, clicks, drawings, captions, and who has control) and `closed`. With `follow: true` it waits for the screen to open again instead of ending.
+
+### Use the app on it
+
+With **Use the app on Pilot's screen**:
+
+```ts
+await screen.takeControl();
+await screen.click(640, 220);          // page pixels, as in the last page event's viewport
+await screen.type('hello@example.com');
+await screen.press('Enter');
+await screen.handBack();               // Pilot takes over again when asked something
+```
+
+---
+
+## 6. Other things you can do
 
 ```ts
 // History and what needs attention
@@ -168,7 +228,7 @@ const domains = await nx.request('GET', '/projects/PROJECT_ID/domains');
 
 ---
 
-## 6. Webhooks (Nexugen calls you)
+## 7. Webhooks (Nexugen calls you)
 
 Register a URL under **Settings > API and webhooks**, or from code:
 
@@ -216,7 +276,7 @@ Deliveries are signed (`x-nexugen-signature: sha256=...` over `timestamp.body`).
 
 ---
 
-## 7. Errors and limits
+## 8. Errors and limits
 
 Every failure throws a `NexugenError` with `status`, `code` and a readable `message`:
 
@@ -235,7 +295,7 @@ try {
 
 | Code | Meaning |
 |---|---|
-| `insufficient_permission` | The key lacks the scope (write, Ask Pilot, or Approve). |
+| `insufficient_permission` | The key lacks the scope (write, Ask Pilot, Approve, or one of the screen scopes). |
 | `credits_exhausted` | No credits or free Pilot tasks left. |
 | `turn_in_progress` | One Pilot turn at a time per person per app; the last one is still running. |
 | `rate_limited` | Over the key's per-minute limit (100 by default). The SDK retries these. |
@@ -248,7 +308,7 @@ A key acts as its owner. Project access, team sharing, credits and plan limits a
 
 ---
 
-## 8. Without the SDK (any language, curl)
+## 9. Without the SDK (any language, curl)
 
 ```bash
 # Stream a turn (server-sent events)
@@ -288,10 +348,15 @@ All Pilot endpoints:
 | GET | `/projects/:id/pilot/clips/:messageId` | read |
 | POST | `/pilot/turns`, GET `/pilot/turns/:turnId`, `.../events`, POST `.../cancel` | account-wide Pilot |
 | POST | `/pilot/changes/:changeId/approve` (or `reject`) | Approve |
+| GET | `/projects/:id/pilot/screen` (server-sent events) | Watch screen |
+| GET | `/projects/:id/pilot/screen/status` | Watch screen |
+| POST | `/projects/:id/pilot/screen/open`, `/close` | Watch screen |
+| POST | `/projects/:id/pilot/screen/embeds` | Watch screen (Use the app, for `control`) |
+| POST | `/projects/:id/pilot/screen/input` | Use the app on the screen |
 
 ---
 
-## 9. Example: a nightly "what needs me" report
+## 10. Example: a nightly "what needs me" report
 
 ```ts
 import { Nexugen } from 'nexugen';

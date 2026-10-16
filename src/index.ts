@@ -70,6 +70,55 @@ export interface PilotActivity {
   [k: string]: unknown;
 }
 
+/** The package version, sent in the user agent. */
+export const SDK_VERSION = '0.2.0';
+
+// ---- Pilot's screen ----
+
+export type ScreenDevice = 'desktop' | 'phone';
+
+/** Pilot's cursor, a click, a drawing on the page, a step caption, or a change of hands. */
+export type ScreenOverlay =
+  | { type: 'cursor'; x: number; y: number; ms?: number; action?: string }
+  | { type: 'ripple'; x: number; y: number }
+  | { type: 'highlight' | 'circle' | 'arrow' | 'box' | 'underline'; box: { x: number; y: number; w: number; h: number }; label?: string }
+  | { type: 'caption' | 'step'; text: string; step?: number; total?: number }
+  | { type: 'clear' }
+  | { type: 'control'; on: boolean }
+  | { type: 'private'; on: boolean; reason: string | null }
+  | { type: string; [key: string]: unknown };
+
+export type ScreenEvent =
+  /** One picture of the app. `jpeg` is base64: `Buffer.from(ev.jpeg, 'base64')` in Node. */
+  | { type: 'frame'; jpeg: string; width: number; height: number }
+  /** The page changed: its address, desktop or phone, and its size in page pixels. */
+  | { type: 'page'; url?: string; device?: ScreenDevice; viewport?: { width: number; height: number } }
+  | { type: 'overlay'; overlay: ScreenOverlay }
+  /** The stream ended: the screen closed, the link expired, or it was not available. */
+  | { type: 'closed'; reason: string; message?: string };
+
+export type ScreenInput =
+  | { kind: 'control'; on: boolean }
+  | { kind: 'click'; x: number; y: number }
+  | { kind: 'type'; text: string }
+  | { kind: 'key'; key: string }
+  | { kind: 'scroll'; dy: number };
+
+export interface ScreenStatus {
+  open: boolean;
+  private?: boolean;
+  origin?: string;
+  mode?: 'app' | 'provider';
+  signedIn?: boolean;
+}
+
+export interface ScreenEmbed {
+  url: string;
+  expiresAt: string;
+  control: boolean;
+  origins: string[];
+}
+
 export type PilotEvent =
   | { id: number; type: 'turn.started'; turnId: string; projectId: string | null }
   /** `text` is the whole reply so far, not a fragment. */
@@ -169,7 +218,7 @@ export class Nexugen {
     for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     const headers: Record<string, string> = {
       authorization: `Bearer ${this.apiKey}`,
-      'user-agent': 'nexugen-sdk-js/0.1.0',
+      'user-agent': `nexugen-sdk-js/${SDK_VERSION}`,
       ...opts.headers,
     };
     let body: BodyInit | undefined;
@@ -371,6 +420,90 @@ export class ProjectPilot extends PilotBase {
     form.append('file', file, name);
     return this.client.request('POST', `${this.root}/attachments`, { body: form });
   }
+
+  /** Pilot's live screen in this app: watch it, open it, use it, or embed it on your site. */
+  get screen(): PilotScreen {
+    return new PilotScreen(this.client, `${this.root}/screen`);
+  }
+}
+
+/**
+ * Pilot's live screen: the app as Pilot sees and drives it, the same screen the owner sees
+ * beside the chat in the dashboard. Needs a key with the pilot:screen scope; using the app
+ * on it (`input`, `click`, `type`...) needs pilot:control.
+ */
+export class PilotScreen {
+  private readonly client: Nexugen;
+  private readonly root: string;
+
+  constructor(client: Nexugen, root: string) {
+    this.client = client;
+    this.root = root;
+  }
+
+  /** Whether the screen is open, on which site, and whether it is private right now. */
+  status(): Promise<ScreenStatus> {
+    return this.client.request('GET', `${this.root}/status`);
+  }
+
+  /** Open the screen on the app (or switch device) without asking Pilot anything. */
+  open(opts: { where?: string; device?: ScreenDevice } = {}): Promise<{ ok: true }> {
+    return this.client.request('POST', `${this.root}/open`, { body: opts });
+  }
+
+  close(): Promise<{ ok: true }> {
+    return this.client.request('POST', `${this.root}/close`);
+  }
+
+  /**
+   * Watch the screen. Yields frames (about 9 a second while something moves), page changes,
+   * Pilot's cursor and drawings, and `closed` when the screen goes away. With `follow`,
+   * waits for it to open again instead of ending, until `signal` aborts.
+   * No frames are sent while someone is signing in on the screen.
+   */
+  async *watch(opts: { signal?: AbortSignal; follow?: boolean } = {}): AsyncGenerator<ScreenEvent> {
+    for (;;) {
+      let closed = false;
+      try {
+        const res = await this.client.raw('GET', this.root, { signal: opts.signal, headers: { accept: 'text/event-stream' } });
+        if (!res.body) throw new NexugenError(502, 'no_stream', 'The screen sent no stream.');
+        for await (const ev of parseScreenStream(res.body)) {
+          yield ev;
+          if (ev.type === 'closed') { closed = true; break; }
+        }
+      } catch (e) {
+        if (opts.signal?.aborted) return;
+        if (!opts.follow || (e instanceof NexugenError && e.status < 500 && e.status !== 429)) throw e;
+      }
+      if (!opts.follow || opts.signal?.aborted) return;
+      await sleep(closed ? 2500 : 3000, opts.signal).catch(() => undefined);
+      if (opts.signal?.aborted) return;
+    }
+  }
+
+  /**
+   * A link to a page showing the screen, for an <iframe> on your own site. Watch-only unless
+   * `control` (needs pilot:control, an hour at most). `origins` limits the sites that may
+   * frame it. The link stops at `expiresAt`, or as soon as this key is revoked.
+   */
+  embed(opts: { ttlSeconds?: number; control?: boolean; origins?: string[] } = {}): Promise<ScreenEmbed> {
+    return this.client.request('POST', `${this.root}/embeds`, { body: opts });
+  }
+
+  /** Use the app on the screen yourself, as the owner. Needs pilot:control. */
+  input(input: ScreenInput): Promise<{ ok: true }> {
+    return this.client.request('POST', `${this.root}/input`, { body: input });
+  }
+
+  /** Take the screen from Pilot (your input goes to the app until you hand it back). */
+  takeControl() { return this.input({ kind: 'control', on: true }); }
+  handBack() { return this.input({ kind: 'control', on: false }); }
+  /** x and y in page pixels, as in the `viewport` of the last page event. */
+  click(x: number, y: number) { return this.input({ kind: 'click', x, y }); }
+  type(text: string) { return this.input({ kind: 'type', text }); }
+  /** A key such as "Enter", "Tab", "Escape", "ArrowDown". */
+  press(key: string) { return this.input({ kind: 'key', key }); }
+  scroll(dy: number) { return this.input({ kind: 'scroll', dy }); }
 }
 
 export class AccountPilot extends PilotBase {
@@ -535,6 +668,40 @@ export async function* parseEventStream(body: ReadableStream<Uint8Array>): Async
           const parsed = JSON.parse(data.join('\n'));
           if (parsed && typeof parsed.type === 'string') yield { ...parsed, id } as PilotEvent;
         } catch { /* not an event */ }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** Parse the screen's server-sent events (`event:` names with JSON `data:`). */
+export async function* parseScreenStream(body: ReadableStream<Uint8Array>): AsyncGenerator<ScreenEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut: number;
+      while ((cut = buffer.search(/\r?\n\r?\n/)) !== -1) {
+        const block = buffer.slice(0, cut);
+        buffer = buffer.slice(cut).replace(/^\r?\n\r?\n/, '');
+        let event = 'message';
+        const data: string[] = [];
+        for (const line of block.split(/\r?\n/)) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+        }
+        if (!data.length) continue;
+        let d: Record<string, unknown>;
+        try { d = JSON.parse(data.join('\n')); } catch { continue; }
+        if (event === 'frame' && typeof d.jpeg === 'string') yield { type: 'frame', jpeg: d.jpeg, width: Number(d.w) || 0, height: Number(d.h) || 0 };
+        else if (event === 'page') yield { type: 'page', ...(d as object) } as ScreenEvent;
+        else if (event === 'overlay') yield { type: 'overlay', overlay: d as ScreenOverlay };
+        else if (event === 'closed') yield { type: 'closed', reason: String(d.reason ?? 'closed'), ...(typeof d.message === 'string' ? { message: d.message } : {}) };
       }
     }
   } finally {
