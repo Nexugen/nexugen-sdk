@@ -239,6 +239,46 @@ for await (const ev of nx.pilot(projectId).ask('How many orders came in this wee
 
 Credentials are tested first, stored encrypted, and never come back. Changes to an outside app always wait for your approval.
 
+### Pilot for the users of an app not built on Nexugen
+
+Any web app, in any language or framework, can give its users a Pilot. Connect it (a `website` is enough), tell Pilot where to learn it, and prove your site:
+
+```ts
+const { projectId } = await nx.accountPilot.connectApp({ kind: 'website', siteUrl: 'https://app.example.com', name: 'Acme' });
+const users = nx.pilot(projectId).forUsers;
+await users.enable();
+await users.sources({
+  github: 'acme/app',                                   // read only; private repos need the Nexugen GitHub App
+  openapi: { url: 'https://api.example.com/openapi.json' },
+  crawl: true,                                          // its live pages, links and forms
+});
+await users.policy('refund_order', 'ask');              // allow | ask | deny, per action
+await users.saveAction({ name: 'track_parcel', label: 'Track my parcel', method: 'GET', path: '/api/parcels/:id' });
+await users.addSite('https://app.example.com');         // checked for proof at once
+```
+
+Then add it to the app, one of three ways (`(await users.get()).snippets` has them all, with your key):
+
+- **Any stack:** one `<script src="https://nexugen.app/widget/pilot.js" data-app="pa_…" async></script>` before `</body>`.
+- **React or Next.js:**
+  ```tsx
+  import { PilotForUsers } from 'nexugen/react';
+
+  <PilotForUsers
+    appKey="pa_…"
+    getAuthHeaders={async () => ({ Authorization: `Bearer ${await getToken()}` })}  // only for token APIs
+    user={async () => ({ signedIn: !!me, name: me?.name })}
+    apiBase="https://api.example.com"                                               // only if the API is elsewhere
+  />
+  ```
+- **Your coding agent:** `snippets.prompt` is a ready prompt for Cursor, Claude Code or Copilot.
+
+The site is proven by the tag on its home page, a file at `/.well-known/nexugen-pilot.txt` containing the key, or a TXT record at `_nexugen-pilot.<host>`. The widget only starts on proven sites, and they are checked again daily. Your users' tokens stay in their browser: the widget adds them to your own API calls and never sends them to Nexugen.
+
+### Features in an outside app's own repository
+
+Ask Pilot for a feature in an outside app and it asks to connect its GitHub repository (the Nexugen GitHub App), then asks once whether changes go straight to `main` or to a branch with a pull request. The same agent that builds Nexugen apps writes the change, your repository's own checks run (npm, pytest, rspec, phpunit, go, gradle or dotnet, whatever it configures), and Pilot gives you the pull request or commit. Merging and undoing wait for your Approve. Your own CI/CD deploys it.
+
 ## 8. Other things you can do
 
 ```ts

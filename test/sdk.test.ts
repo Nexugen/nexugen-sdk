@@ -176,3 +176,45 @@ test('connects an outside app and runs Pilot for an app\'s users', async () => {
     ['GET', '/projects/p1/app-assistant', undefined],
   ]);
 });
+
+test('Pilot for your users on an outside app: sources, sites, policy, hand-made actions', async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const nx = new Nexugen({
+    apiKey: 'nxg_test', baseUrl: 'https://x.test/api/v1',
+    fetch: async (url, init) => {
+      if (init?.method === 'POST') bodies.push(JSON.parse(String(init.body)));
+      return json({ exists: true, enabled: true, outside: true, publicKey: 'pa_abcdefghij' });
+    },
+  });
+  const users = nx.pilot('ext1').forUsers;
+  await users.sources({ github: 'acme/shop', openapi: { url: 'https://api.acme.test/openapi.json' }, crawl: true });
+  await users.addSite('https://shop.acme.test');
+  await users.verify();
+  await users.policy('refund_order', 'ask');
+  await users.saveAction({ name: 'track_parcel', label: 'Track my parcel', method: 'GET', path: '/api/parcels/:id' });
+  await users.removeAction('track_parcel');
+  assert.deepEqual(bodies.map((b) => b.action), ['sources', 'origin_add', 'verify', 'policy', 'action_save', 'action_remove']);
+  assert.equal(bodies[3].policy, 'ask');
+});
+
+test('nexugen/react loads the widget once and hands it fresh hooks', async () => {
+  const { loadWidget, pilotHooks } = await import('../src/react.ts');
+  const added: Array<Record<string, string>> = [];
+  const doc = {
+    querySelector: (sel: string) => (added.some((s) => sel.includes(s['data-app'])) ? {} : null),
+    createElement: () => { const el: Record<string, string> & { setAttribute?: (k: string, v: string) => void } = {}; el.setAttribute = (k, v) => { el[k] = v; }; return el; },
+    body: { appendChild: (el: Record<string, string>) => added.push(el) },
+  } as unknown as Document;
+  assert.equal(loadWidget(doc, 'pa_abcdefghij'), true);
+  assert.equal(loadWidget(doc, 'pa_abcdefghij'), false);
+  assert.equal(loadWidget(doc, 'not-a-key'), false);
+  assert.equal(added.length, 1);
+  assert.equal(added[0].src, 'https://nexugen.app/widget/pilot.js');
+  const latest = { current: { appKey: 'pa_abcdefghij', getAuthHeaders: () => ({ Authorization: 'Bearer one' }), apiBase: 'https://api.test' } };
+  const hooks = pilotHooks(latest);
+  assert.deepEqual(await hooks.auth(), { headers: { Authorization: 'Bearer one' } });
+  latest.current = { ...latest.current, getAuthHeaders: () => ({ Authorization: 'Bearer two' }), apiBase: 'https://api2.test' };
+  assert.deepEqual(await hooks.auth(), { headers: { Authorization: 'Bearer two' } });
+  assert.equal(hooks.apiBase, 'https://api2.test');
+  assert.equal(await hooks.user(), null);
+});

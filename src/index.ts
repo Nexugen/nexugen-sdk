@@ -71,7 +71,7 @@ export interface PilotActivity {
 }
 
 /** The package version, sent in the user agent. */
-export const SDK_VERSION = '0.3.0';
+export const SDK_VERSION = '0.4.0';
 
 // ---- Pilot's screen ----
 
@@ -447,8 +447,38 @@ export interface AppAssistantSettings {
   audience?: 'everyone' | 'signed-in';
   /** May it click and type on the app's pages, not only call its actions. */
   pageActions?: boolean;
-  /** Extra sites it may run on beyond the app's own addresses. */
+  /** Extra sites it may run on beyond the app's own addresses (Nexugen apps). */
   origins?: string[];
+  /** Your API's address when it is not on the same site as your pages. */
+  apiBase?: string | null;
+}
+
+/** allow: runs (changes still ask the person). ask: always asks first. deny: never offered. */
+export type ActionPolicy = 'allow' | 'ask' | 'deny';
+
+/** Where an outside app's map comes from. Any mix. */
+export interface AppAssistantSources {
+  /** owner/repo, or { owner, repo, branch }. Public repos as they are; private ones need the Nexugen GitHub App. */
+  github?: string | { owner: string; repo: string; branch?: string } | null;
+  /** An OpenAPI / Swagger spec: its https address, or the spec itself (JSON or YAML). */
+  openapi?: { url?: string; text?: string } | null;
+  /** Read the live site's pages, links and forms too. */
+  crawl?: boolean;
+  preset?: 'woocommerce' | 'shopify' | 'wordpress' | null;
+}
+
+/** An action added by hand, in the map's shape. */
+export interface AppActionInput {
+  name: string;
+  label: string;
+  description?: string;
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** /api/parcels/:id, relative to the site or to apiBase. */
+  path: string;
+  params?: Array<{ name: string; in: 'path' | 'query' | 'body'; type?: 'string' | 'number' | 'boolean' | 'object' | 'array'; required?: boolean; description?: string }>;
+  audience?: 'public' | 'user' | 'admin';
+  /** Its own API address, when it differs from the rest. */
+  base?: string;
 }
 
 export interface AppAssistantState {
@@ -458,7 +488,14 @@ export interface AppAssistantState {
   /** The tag, for adding it by hand. */
   snippet?: string;
   scan?: { status: 'none' | 'scanning' | 'ready' | 'failed'; error: string | null; at: string | null };
-  map?: { summary: string; roles: string[]; pages: number; whoami: boolean; actions: Array<{ name: string; label: string; method: string; path: string; kind: 'read' | 'write'; audience: 'public' | 'user' | 'admin'; on: boolean }> };
+  /** True for an app not built on Nexugen. */
+  outside?: boolean;
+  /** Ways to install it: the tag, the React component, and a prompt for your coding agent. */
+  snippets?: { script: string; react: string; prompt: string; file: string; dns: string };
+  sources?: { github: { owner: string; repo: string; branch?: string } | null; openapi: { url: string | null; pasted: boolean; chars: number } | null; crawl: boolean; preset: string | null; manual: string[] } | null;
+  /** Sites proven to be yours, and how. */
+  checks?: Array<{ origin: string; ok: boolean; method?: 'page' | 'file' | 'dns'; at: string; error?: string }>;
+  map?: { summary: string; roles: string[]; pages: number; whoami: boolean; apiBase?: string | null; actions: Array<{ name: string; label: string; method: string; path: string; kind: 'read' | 'write'; audience: 'public' | 'user' | 'admin'; on: boolean; policy?: ActionPolicy; manual?: boolean }> };
   settings?: AppAssistantSettings;
   install?: { file: string | null; installed: boolean };
   origins?: string[];
@@ -484,6 +521,18 @@ export class AppAssistant {
   settings(settings: AppAssistantSettings) { return this.act({ action: 'settings', settings }); }
   /** Switch one of the app's actions on or off for the assistant. */
   toggle(name: string, on: boolean) { return this.act({ action: 'toggle', name, on }); }
+  /** allow, ask (always confirm first) or deny one action. */
+  policy(name: string, policy: ActionPolicy) { return this.act({ action: 'policy', name, policy }); }
+  /** Outside apps: where it learns the app (GitHub, OpenAPI, crawl, platform). It reads it again. */
+  sources(sources: AppAssistantSources) { return this.act({ action: 'sources', sources }); }
+  /** Add or correct an action by hand. */
+  saveAction(item: AppActionInput) { return this.act({ action: 'action_save', item }); }
+  removeAction(name: string) { return this.act({ action: 'action_remove', name }); }
+  /** Outside apps: a site it runs on. It is checked for proof (the tag, /.well-known/nexugen-pilot.txt, or DNS) at once. */
+  addSite(origin: string) { return this.act({ action: 'origin_add', origin }); }
+  removeSite(origin: string) { return this.act({ action: 'origin_remove', origin }); }
+  /** Check the proof again, for one site or all. */
+  verify(origin?: string) { return this.act({ action: 'verify', ...(origin ? { origin } : {}) }); }
 }
 
 /**
